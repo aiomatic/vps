@@ -1,35 +1,34 @@
 #!/bin/bash
-# setup_rdp.sh — Auto RDP setup on Ubuntu for Azure
-# ⚠️ For demo/lab use only — RDP on port 80 without auth is insecure.
+# ----------------------------------------------------------
+# setup_rdp.sh — Ubuntu XFCE + noVNC web desktop (HTTPS)
+# ----------------------------------------------------------
 
 set -e
 
-# 1. Update system
+echo "🔧 Updating system..."
 sudo apt update -y && sudo apt upgrade -y
 
-# 2. Install XFCE desktop + xrdp
-sudo apt install xfce4 xfce4-goodies xrdp wget -y
-echo xfce4-session > ~/.xsession
-sudo systemctl enable xrdp
+echo "🖥️ Installing desktop + tools..."
+sudo apt install -y xfce4 xfce4-goodies tightvncserver novnc websockify python3-websockify wget openssl
 
-# 3. Change xrdp to port 80
-sudo sed -i 's/3389/80/' /etc/xrdp/xrdp.ini
+# --- Create VNC password ---
+echo "🧩 Setting VNC password..."
+mkdir -p ~/.vnc
+(echo "chrome123"; echo "chrome123"; echo "n") | vncpasswd
+cat <<'EOF' > ~/.vnc/xstartup
+#!/bin/bash
+xrdb $HOME/.Xresources
+startxfce4 &
+EOF
+chmod +x ~/.vnc/xstartup
 
-# 4. Disable xrdp password auth (lab only)
-sudo sed -i 's/^auth required/#auth required/' /etc/pam.d/xrdp-sesman
-
-# 5. Restart service
-sudo systemctl restart xrdp
-
-# 6. Allow port 80
-sudo ufw allow 80/tcp || true
-sudo ufw reload || true
-
-# 7. Install Google Chrome
+# --- Install Google Chrome ---
+echo "🌐 Installing Google Chrome..."
 wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-sudo apt install ./google-chrome-stable_current_amd64.deb -y
+sudo apt install -y ./google-chrome-stable_current_amd64.deb || true
 
-# 8. Create desktop shortcut
+# --- Create desktop shortcut ---
+echo "🖱️ Creating Chrome desktop shortcut..."
 mkdir -p ~/Desktop
 cat <<EOF > ~/Desktop/Google-Chrome.desktop
 [Desktop Entry]
@@ -43,7 +42,62 @@ Categories=Network;WebBrowser;
 EOF
 chmod +x ~/Desktop/Google-Chrome.desktop
 
-# 9. Disable sleep/hibernate
+# --- Create VNC systemd service ---
+echo "⚙️ Creating VNC systemd service..."
+sudo tee /etc/systemd/system/vncserver.service > /dev/null <<'EOF'
+[Unit]
+Description=VNC Server for azureuser
+After=network.target
+
+[Service]
+Type=forking
+User=azureuser
+ExecStart=/usr/bin/vncserver :1 -geometry 1280x800 -depth 24
+ExecStop=/usr/bin/vncserver -kill :1
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# --- Create self-signed SSL certificate for noVNC ---
+echo "🔐 Generating self-signed certificate..."
+sudo mkdir -p /usr/share/novnc
+sudo openssl req -x509 -nodes -newkey rsa:2048 \
+  -keyout /usr/share/novnc/self.pem \
+  -out /usr/share/novnc/self.pem \
+  -days 365 \
+  -subj "/C=US/ST=None/L=None/O=romanempirehistory/CN=$(hostname -f)"
+sudo chmod 600 /usr/share/novnc/self.pem
+
+# --- Create noVNC systemd service (HTTPS) ---
+echo "🌍 Creating noVNC service..."
+sudo tee /etc/systemd/system/novnc.service > /dev/null <<'EOF'
+[Unit]
+Description=noVNC WebSocket proxy
+After=vncserver.service
+Wants=vncserver.service
+
+[Service]
+Type=simple
+User=azureuser
+ExecStart=/usr/share/novnc/utils/launch.sh --vnc localhost:5901 --listen 6080 --ssl-only --cert /usr/share/novnc/self.pem
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# --- Disable sleep/hibernate ---
+echo "💤 Disabling sleep and hibernate..."
 sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 
-echo "✅ RDP setup complete. Connect with mstsc /v:<server_ip>:80"
+# --- Enable and start services ---
+echo "🚀 Enabling and starting services..."
+sudo systemctl daemon-reload
+sudo systemctl enable vncserver novnc
+sudo systemctl restart vncserver novnc
+
+echo "✅ Setup complete!"
+echo "Access your desktop at: https://$(curl -s ifconfig.me):6080/"
+echo "VNC Password: chrome123"
