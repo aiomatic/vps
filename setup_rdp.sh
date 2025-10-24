@@ -3,10 +3,9 @@
 # setup_rdp.sh — Ubuntu XFCE + noVNC web desktop (HTTPS)
 # with 16 GB swap automatically configured
 # ----------------------------------------------------------
-
-set -e
 export HOME=/home/azureuser
 cd $HOME
+set -e
 
 echo "🔧 Updating system..."
 sudo apt update -y && sudo apt upgrade -y
