@@ -1,30 +1,16 @@
 #!/bin/bash
-# ============================================================
-# Azure Ubuntu Desktop Setup Script (XFCE + Chrome + VNC + noVNC)
-# Author: Usman Farooq
-# GitHub: https://github.com/aiomatic/vps
-# Last Updated: Oct 2025
-# ============================================================
-
 set -e
+
+echo "🚀 Starting full RDP/noVNC setup..."
+
+# === 1️⃣ SYSTEM UPDATE ===
 export DEBIAN_FRONTEND=noninteractive
+apt update -y && apt upgrade -y
+apt install -y xfce4 xfce4-goodies tightvncserver novnc websockify python3-numpy curl wget net-tools ufw unzip -q
 
-echo "🚀 Starting Azure Ubuntu Desktop setup..."
-
-# ------------------------------------------------------------
-# 1️⃣ Update system and install essentials
-# ------------------------------------------------------------
-apt-get update -y
-apt-get upgrade -y
-apt-get install -y xfce4 xfce4-goodies tightvncserver novnc websockify python3-numpy \
-    xterm dbus-x11 policykit-1 wget curl sudo unzip software-properties-common \
-    apt-transport-https gnupg ufw
-
-# ------------------------------------------------------------
-# 2️⃣ Set up 16 GB swap file
-# ------------------------------------------------------------
+# === 2️⃣ ADD 16GB SWAP ===
 if [ ! -f /swapfile ]; then
-  echo "⚙️ Creating 16 GB swap..."
+  echo "💾 Creating 16GB swap..."
   fallocate -l 16G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=16384
   chmod 600 /swapfile
   mkswap /swapfile
@@ -32,14 +18,12 @@ if [ ! -f /swapfile ]; then
   echo '/swapfile none swap sw 0 0' | tee -a /etc/fstab
 fi
 
-# ------------------------------------------------------------
-# 3️⃣ Set up VNC password and XFCE startup
-# ------------------------------------------------------------
-echo "🧩 Setting VNC password..."
+# === 3️⃣ CONFIGURE VNC ===
+VNC_PASS="chrome123"
 mkdir -p /home/azureuser/.vnc
-echo "chrome123" | vncpasswd -f > /home/azureuser/.vnc/passwd
-chmod 600 /home/azureuser/.vnc/passwd
+echo $VNC_PASS | vncpasswd -f > /home/azureuser/.vnc/passwd
 chown -R azureuser:azureuser /home/azureuser/.vnc
+chmod 600 /home/azureuser/.vnc/passwd
 
 cat > /home/azureuser/.vnc/xstartup <<'EOF'
 #!/bin/bash
@@ -47,71 +31,51 @@ xrdb $HOME/.Xresources
 startxfce4 &
 EOF
 chmod +x /home/azureuser/.vnc/xstartup
-chown azureuser:azureuser /home/azureuser/.vnc/xstartup
 
-# ------------------------------------------------------------
-# 4️⃣ Install Google Chrome
-# ------------------------------------------------------------
-echo "🌐 Installing Google Chrome..."
-cd /home/azureuser
-wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-apt install -y ./google-chrome-stable_current_amd64.deb || apt-get install -f -y
-rm -f google-chrome-stable_current_amd64.deb
-
-# ------------------------------------------------------------
-# 5️⃣ Create reliable VNC startup service
-# ------------------------------------------------------------
-echo "🖥️ Creating VNC auto-start service..."
-cat > /usr/local/bin/start_vnc.sh <<'EOF'
-#!/bin/bash
-USER="azureuser"
-DISPLAY=":1"
-GEOMETRY="1280x800"
-DEPTH="24"
-LOG="/home/$USER/.vnc/vnc_startup.log"
-
-sleep 10
-/usr/bin/vncserver -kill $DISPLAY >/dev/null 2>&1 || true
-mkdir -p /home/$USER/.vnc
-chown -R $USER:$USER /home/$USER/.vnc
-
-sudo -u $USER -H /usr/bin/vncserver $DISPLAY -geometry $GEOMETRY -depth $DEPTH >> "$LOG" 2>&1
-EOF
-chmod +x /usr/local/bin/start_vnc.sh
-
-cat > /etc/systemd/system/vnc-autostart.service <<'EOF'
+# === 4️⃣ CREATE SYSTEMD SERVICE FOR VNC ===
+cat > /etc/systemd/system/vncserver.service <<'EOF'
 [Unit]
-Description=Auto-start VNC server for azureuser
-After=network-online.target systemd-user-sessions.service
-Wants=network-online.target
+Description=VNC Server for azureuser
+After=network.target
 
 [Service]
-Type=simple
-ExecStart=/usr/local/bin/start_vnc.sh
-Restart=always
-RestartSec=15
+Type=forking
+User=azureuser
+PAMName=login
+PIDFile=/home/azureuser/.vnc/%H:1.pid
+ExecStartPre=-/usr/bin/vncserver -kill :1 > /dev/null 2>&1
+ExecStart=/usr/bin/vncserver :1 -geometry 1280x800 -depth 24
+ExecStop=/usr/bin/vncserver -kill :1
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable vnc-autostart
-systemctl start vnc-autostart
+systemctl enable vncserver
+systemctl start vncserver
 
-# ------------------------------------------------------------
-# 6️⃣ Set up noVNC service
-# ------------------------------------------------------------
-echo "🌍 Setting up noVNC service..."
+# === 5️⃣ INSTALL CHROME ===
+echo "🌐 Installing Google Chrome..."
+cd /home/azureuser
+wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+apt install -y ./google-chrome-stable_current_amd64.deb || apt -f install -y
+rm -f google-chrome-stable_current_amd64.deb
+
+# === 6️⃣ CONFIGURE noVNC ===
+echo "🕸️ Setting up noVNC..."
+ln -sf /usr/share/novnc /opt/novnc
+ln -sf /usr/share/novnc/utils/websockify /usr/bin/websockify
+
 cat > /etc/systemd/system/novnc.service <<'EOF'
 [Unit]
-Description=noVNC Web Access
-After=vnc-autostart.service
+Description=noVNC WebSocket proxy
+After=network.target vncserver.service
 
 [Service]
-ExecStart=/usr/bin/websockify --web=/usr/share/novnc/ --wrap-mode=ignore 6080 localhost:5901
+User=root
+ExecStart=/usr/bin/websockify --web=/usr/share/novnc/ 6080 localhost:5901
 Restart=always
-User=azureuser
 
 [Install]
 WantedBy=multi-user.target
@@ -119,23 +83,33 @@ EOF
 
 systemctl daemon-reload
 systemctl enable novnc
-systemctl start novnc
+systemctl restart novnc
 
-# ------------------------------------------------------------
-# 7️⃣ Security & usability improvements
-# ------------------------------------------------------------
-echo "💤 Disabling sleep and hibernate..."
-systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
-
+# === 7️⃣ FIREWALL (UFW + Azure NSG) ===
+echo "🔓 Configuring firewall..."
 ufw allow 22/tcp
+ufw allow 3389/tcp
 ufw allow 5901/tcp
 ufw allow 6080/tcp
-ufw --force enable
+ufw --force enable || true
 
-# ------------------------------------------------------------
-# ✅ Final check
-# ------------------------------------------------------------
-echo "✅ Installation completed successfully!"
-echo "🖥️ Access via VNC at: <your-public-ip>:5901"
-echo "🌍 Access via browser (noVNC): http://<your-public-ip>:6080/"
-echo "🔑 VNC password: chrome123"
+# Azure NSG rule auto-open (if Azure CLI is installed)
+if command -v az &> /dev/null; then
+  VMNAME=$(hostname)
+  RG=$(curl -s -H Metadata:true "http://169.254.169.254/metadata/instance/compute/resourceGroupName?api-version=2021-02-01&format=text" || echo "")
+  NSG=$(az network nsg list --resource-group "$RG" --query "[0].name" -o tsv 2>/dev/null || echo "")
+  if [ -n "$NSG" ]; then
+    for port in 3389 5901 6080; do
+      az network nsg rule create --resource-group "$RG" --nsg-name "$NSG" \
+        --name allow-$port --priority $((300+$port)) \
+        --access Allow --protocol Tcp --direction Inbound \
+        --destination-port-ranges $port --source-address-prefixes '*' >/dev/null 2>&1 || true
+    done
+  fi
+fi
+
+# === 8️⃣ FINISH ===
+echo "✅ Setup completed!"
+echo "➡️ Access via: http://<your-public-ip>:6080/vnc.html"
+echo "   VNC: localhost:5901"
+echo "   Password: $VNC_PASS"
