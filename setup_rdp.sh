@@ -1,58 +1,94 @@
 #!/bin/bash
 # ============================================================
-# setup_rdp.sh — Ubuntu XFCE + noVNC (port 6080)
-# Fully automated for Azure VMs — no prompts, no failures.
+# setup_rdp.sh — Ubuntu XFCE + noVNC desktop for Azure VM
+# Fully non-interactive. Auto-starts VNC & noVNC after reboot.
 # ============================================================
 
 set -e
 export HOME=/home/azureuser
-cd $HOME
 
-echo "🧩 Starting Ubuntu desktop setup..."
-
-# ------------------------------------------------------------
-# 1️⃣ Update system
-# ------------------------------------------------------------
-sudo apt update -y && sudo apt upgrade -y
+echo "🧩 Starting Azure VM Desktop Setup..."
 
 # ------------------------------------------------------------
-# 2️⃣ Create 16 GB Swap file
+# 1️⃣ Update
 # ------------------------------------------------------------
-echo "🌿 Creating 16 GB swap..."
+apt update -y && apt upgrade -y
+
+# ------------------------------------------------------------
+# 2️⃣ 16 GB Swap
+# ------------------------------------------------------------
 if [ ! -f /swapfile ]; then
-  sudo fallocate -l 16G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=16384
-  sudo chmod 600 /swapfile
-  sudo mkswap /swapfile
-  sudo swapon /swapfile
-  echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+  echo "🌿 Creating 16 GB swap file..."
+  fallocate -l 16G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=16384
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
 # ------------------------------------------------------------
-# 3️⃣ Install Desktop & Tools
+# 3️⃣ Install XFCE + Tools
 # ------------------------------------------------------------
-sudo apt install -y xfce4 xfce4-goodies tightvncserver novnc websockify python3-numpy curl wget unzip net-tools
+echo "🖥️ Installing XFCE and dependencies..."
+DEBIAN_FRONTEND=noninteractive apt install -y xfce4 xfce4-goodies tightvncserver novnc websockify python3-numpy curl wget unzip net-tools dbus-x11
 
 # ------------------------------------------------------------
-# 4️⃣ Prepare VNC password & xstartup
+# 4️⃣ Create azureuser home directories
 # ------------------------------------------------------------
-echo "🔐 Setting VNC password..."
-sudo mkdir -p /home/azureuser/.vnc
-echo "chrome123" | vncpasswd -f | sudo tee /home/azureuser/.vnc/passwd >/dev/null
-sudo chmod 600 /home/azureuser/.vnc/passwd
-sudo chown -R azureuser:azureuser /home/azureuser/.vnc
+mkdir -p /home/azureuser/.vnc /home/azureuser/Desktop
+chown -R azureuser:azureuser /home/azureuser
 
-cat <<EOF | sudo tee /home/azureuser/.vnc/xstartup
+# ------------------------------------------------------------
+# 5️⃣ Configure VNC (non-interactive)
+# ------------------------------------------------------------
+echo "🔐 Configuring VNC password..."
+echo "chrome123" | vncpasswd -f > /home/azureuser/.vnc/passwd
+chmod 600 /home/azureuser/.vnc/passwd
+chown azureuser:azureuser /home/azureuser/.vnc/passwd
+
+cat <<'EOF' > /home/azureuser/.vnc/xstartup
 #!/bin/bash
-xrdb \$HOME/.Xresources
+xrdb $HOME/.Xresources
 startxfce4 &
 EOF
-sudo chmod +x /home/azureuser/.vnc/xstartup
-sudo chown azureuser:azureuser /home/azureuser/.vnc/xstartup
+chmod +x /home/azureuser/.vnc/xstartup
+chown azureuser:azureuser /home/azureuser/.vnc/xstartup
 
 # ------------------------------------------------------------
-# 5️⃣ Create VNC systemd service
+# 6️⃣ Install Chrome
 # ------------------------------------------------------------
-cat <<EOF | sudo tee /etc/systemd/system/vncserver.service
+echo "🌐 Installing Google Chrome..."
+wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/chrome.deb
+apt install -y /tmp/chrome.deb || true
+rm -f /tmp/chrome.deb
+
+cat <<EOF > /home/azureuser/Desktop/chrome.desktop
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Google Chrome
+Exec=/usr/bin/google-chrome-stable
+Icon=google-chrome
+Categories=Network;WebBrowser;
+Terminal=false
+EOF
+chmod +x /home/azureuser/Desktop/chrome.desktop
+chown -R azureuser:azureuser /home/azureuser/Desktop
+
+# ------------------------------------------------------------
+# 7️⃣ SSL cert for noVNC
+# ------------------------------------------------------------
+mkdir -p /etc/ssl/novnc
+openssl req -x509 -nodes -newkey rsa:2048 \
+  -keyout /etc/ssl/novnc/self.pem \
+  -out /etc/ssl/novnc/self.pem \
+  -days 365 \
+  -subj "/CN=localhost"
+
+# ------------------------------------------------------------
+# 8️⃣ VNC + noVNC services
+# ------------------------------------------------------------
+cat <<'EOF' > /etc/systemd/system/vncserver.service
 [Unit]
 Description=VNC Server for azureuser
 After=network.target
@@ -72,45 +108,7 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 
-# ------------------------------------------------------------
-# 6️⃣ Install Google Chrome
-# ------------------------------------------------------------
-cd /home/azureuser
-wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-sudo apt install -y ./google-chrome-stable_current_amd64.deb || true
-rm -f google-chrome-stable_current_amd64.deb
-
-# ------------------------------------------------------------
-# 7️⃣ Chrome desktop shortcut
-# ------------------------------------------------------------
-mkdir -p /home/azureuser/Desktop
-cat <<EOF > /home/azureuser/Desktop/chrome.desktop
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Google Chrome
-Exec=/usr/bin/google-chrome-stable
-Icon=google-chrome
-Categories=Network;WebBrowser;
-Terminal=false
-EOF
-chmod +x /home/azureuser/Desktop/chrome.desktop
-sudo chown -R azureuser:azureuser /home/azureuser/Desktop
-
-# ------------------------------------------------------------
-# 8️⃣ SSL certificate for noVNC
-# ------------------------------------------------------------
-sudo mkdir -p /etc/ssl/novnc
-sudo openssl req -x509 -nodes -newkey rsa:2048 \
-  -keyout /etc/ssl/novnc/self.pem \
-  -out /etc/ssl/novnc/self.pem \
-  -days 365 \
-  -subj "/CN=localhost"
-
-# ------------------------------------------------------------
-# 9️⃣ noVNC service
-# ------------------------------------------------------------
-cat <<EOF | sudo tee /etc/systemd/system/novnc.service
+cat <<'EOF' > /etc/systemd/system/novnc.service
 [Unit]
 Description=noVNC WebSocket Proxy
 After=network.target vncserver.service
@@ -126,18 +124,21 @@ WantedBy=multi-user.target
 EOF
 
 # ------------------------------------------------------------
-# 🔟 Disable sleep
+# 9️⃣ Disable sleep
 # ------------------------------------------------------------
-sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
+systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
 
 # ------------------------------------------------------------
-# 11️⃣ Enable & start
+# 🔟 Enable on next boot (not now)
 # ------------------------------------------------------------
-sudo systemctl daemon-reload
-sudo systemctl enable vncserver novnc
-sudo systemctl restart vncserver || true
-sudo systemctl restart novnc || true
+systemctl daemon-reexec
+systemctl daemon-reload
+systemctl enable vncserver novnc
 
-echo "✅ Setup complete!"
-echo "🌍 Access: http://<your-vm-ip>:6080/"
-echo "🔑 Password: chrome123"
+# Do not start now to avoid root TTY failure
+echo "🚀 Setup finished. Services will start automatically after reboot."
+
+# ------------------------------------------------------------
+# 🔁 Reboot to activate
+# ------------------------------------------------------------
+reboot
