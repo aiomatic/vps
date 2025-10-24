@@ -1,13 +1,26 @@
 #!/bin/bash
 # ----------------------------------------------------------
 # setup_rdp.sh — Ubuntu XFCE + noVNC web desktop (HTTPS)
+# with 16 GB swap automatically configured
 # ----------------------------------------------------------
+
+set -e
 export HOME=/home/azureuser
 cd $HOME
-set -e
 
 echo "🔧 Updating system..."
 sudo apt update -y && sudo apt upgrade -y
+
+echo "🧩 Creating 16 GB swap file..."
+if [ ! -f /swapfile ]; then
+  sudo fallocate -l 16G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=16384
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile
+  sudo swapon /swapfile
+  echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+  echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swappiness.conf
+  sudo sysctl -p /etc/sysctl.d/99-swappiness.conf
+fi
 
 echo "🖥️ Installing desktop + tools..."
 sudo apt install -y xfce4 xfce4-goodies tightvncserver novnc websockify python3-websockify wget openssl
