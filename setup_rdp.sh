@@ -2,7 +2,8 @@
 # ----------------------------------------------------------
 # setup_rdp.sh — Ubuntu XFCE + noVNC web desktop (HTTPS)
 # ----------------------------------------------------------
-
+export HOME=/home/azureuser
+cd $HOME
 set -e
 
 echo "🔧 Updating system..."
