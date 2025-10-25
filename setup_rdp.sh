@@ -34,20 +34,20 @@ startxfce4 &
 EOF
 chmod +x $USER_HOME/.vnc/xstartup
 
-# === 4️⃣ CREATE SYSTEMD SERVICE FOR VNC ===
+# === 4️⃣ CREATE FIXED SYSTEMD SERVICE FOR VNC ===
 cat > /etc/systemd/system/vncserver.service <<'EOF'
 [Unit]
 Description=VNC Server for azureuser
 After=network.target
 
 [Service]
-Type=forking
+Type=simple
 User=azureuser
 PAMName=login
-PIDFile=/home/azureuser/.vnc/%H:1.pid
-ExecStartPre=-/usr/bin/vncserver -kill :1 > /dev/null 2>&1
+Environment=DISPLAY=:1
 ExecStart=/usr/bin/vncserver :1 -geometry 1280x800 -depth 24
 ExecStop=/usr/bin/vncserver -kill :1
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
@@ -55,7 +55,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable vncserver
-systemctl start vncserver
+systemctl restart vncserver
 
 # === 5️⃣ INSTALL GOOGLE CHROME ===
 echo "🌐 Installing Google Chrome..."
