@@ -105,6 +105,6 @@ ufw --force enable || true
 # === 9️⃣ DISPLAY ACCESS INFO ===
 IP=$(hostname -I | awk '{print $1}')
 echo "✅ Setup Completed!"
-echo "➡️ RDP: $IP:3389  (login with Ubuntu user)"
+echo "➡️ RDP: $IP:3389  (login with your Ubuntu user)"
 echo "➡️ noVNC: http://$IP:6080/vnc.html  (password: $VNC_PASS)"
 echo "➡️ VNC: $IP:5901  (password: $VNC_PASS)"
