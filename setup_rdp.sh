@@ -6,7 +6,7 @@ echo "🚀 Starting full RDP + VNC + noVNC setup..."
 # === 1️⃣ SYSTEM UPDATE ===
 export DEBIAN_FRONTEND=noninteractive
 apt update -y && apt upgrade -y
-apt install -y xfce4 xfce4-goodies tightvncserver novnc websockify python3-numpy curl wget net-tools ufw unzip xrdp -q
+apt install -y xfce4 xfce4-goodies tightvncserver novnc websockify python3-websockify python3-numpy curl wget net-tools ufw unzip xrdp -q
 
 # === 2️⃣ ADD 16GB SWAP (if not exists) ===
 if [ ! -f /swapfile ]; then
@@ -34,7 +34,7 @@ startxfce4 &
 EOF
 chmod +x $USER_HOME/.vnc/xstartup
 
-# === 4️⃣ CREATE FIXED SYSTEMD SERVICE FOR VNC ===
+# === 4️⃣ FIXED SYSTEMD SERVICE FOR VNC ===
 cat > /etc/systemd/system/vncserver.service <<'EOF'
 [Unit]
 Description=VNC Server for azureuser
@@ -64,11 +64,18 @@ wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.de
 apt install -y ./google-chrome-stable_current_amd64.deb || apt -f install -y
 rm -f google-chrome-stable_current_amd64.deb
 
-# === 6️⃣ CREATE SYSTEMD SERVICE FOR noVNC ===
-echo "🕸️ Setting up noVNC..."
-ln -sf /usr/share/novnc /opt/novnc
-ln -sf /usr/share/novnc/utils/websockify /usr/bin/websockify
+# === 6️⃣ ENSURE WEBSOCKIFY IS AVAILABLE ===
+if ! command -v websockify &> /dev/null; then
+  echo "⚙️ Installing websockify..."
+  apt install -y websockify python3-websockify novnc
+fi
 
+# Fix symlink if not exists
+if [ ! -f /usr/bin/websockify ]; then
+  ln -sf /usr/share/novnc/utils/websockify /usr/bin/websockify
+fi
+
+# === 7️⃣ CREATE SYSTEMD SERVICE FOR noVNC ===
 cat > /etc/systemd/system/novnc.service <<'EOF'
 [Unit]
 Description=noVNC WebSocket proxy
@@ -87,14 +94,14 @@ systemctl daemon-reload
 systemctl enable novnc
 systemctl restart novnc
 
-# === 7️⃣ CONFIGURE XRDP ===
+# === 8️⃣ CONFIGURE XRDP ===
 echo "🖥️ Enabling xRDP..."
 echo xfce4-session > /home/azureuser/.xsession
 chown azureuser:azureuser /home/azureuser/.xsession
 systemctl enable xrdp
 systemctl restart xrdp
 
-# === 8️⃣ FIREWALL RULES ===
+# === 9️⃣ FIREWALL RULES ===
 echo "🔓 Configuring UFW..."
 ufw allow 22/tcp
 ufw allow 3389/tcp
@@ -102,7 +109,7 @@ ufw allow 5901/tcp
 ufw allow 6080/tcp
 ufw --force enable || true
 
-# === 9️⃣ DISPLAY ACCESS INFO ===
+# === 🔟 DISPLAY ACCESS INFO ===
 IP=$(hostname -I | awk '{print $1}')
 echo "✅ Setup Completed!"
 echo "➡️ RDP: $IP:3389  (login with your Ubuntu user)"
