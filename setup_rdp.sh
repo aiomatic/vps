@@ -1,14 +1,14 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Starting full RDP/noVNC setup..."
+echo "🚀 Starting full RDP + VNC + noVNC setup..."
 
 # === 1️⃣ SYSTEM UPDATE ===
 export DEBIAN_FRONTEND=noninteractive
 apt update -y && apt upgrade -y
-apt install -y xfce4 xfce4-goodies tightvncserver novnc websockify python3-numpy curl wget net-tools ufw unzip -q
+apt install -y xfce4 xfce4-goodies tightvncserver novnc websockify python3-numpy curl wget net-tools ufw unzip xrdp -q
 
-# === 2️⃣ ADD 16GB SWAP ===
+# === 2️⃣ ADD 16GB SWAP (if not exists) ===
 if [ ! -f /swapfile ]; then
   echo "💾 Creating 16GB swap..."
   fallocate -l 16G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=16384
@@ -20,17 +20,19 @@ fi
 
 # === 3️⃣ CONFIGURE VNC ===
 VNC_PASS="chrome123"
-mkdir -p /home/azureuser/.vnc
-echo $VNC_PASS | vncpasswd -f > /home/azureuser/.vnc/passwd
-chown -R azureuser:azureuser /home/azureuser/.vnc
-chmod 600 /home/azureuser/.vnc/passwd
+USER_HOME="/home/azureuser"
 
-cat > /home/azureuser/.vnc/xstartup <<'EOF'
+mkdir -p $USER_HOME/.vnc
+echo $VNC_PASS | vncpasswd -f > $USER_HOME/.vnc/passwd
+chown -R azureuser:azureuser $USER_HOME/.vnc
+chmod 600 $USER_HOME/.vnc/passwd
+
+cat > $USER_HOME/.vnc/xstartup <<'EOF'
 #!/bin/bash
 xrdb $HOME/.Xresources
 startxfce4 &
 EOF
-chmod +x /home/azureuser/.vnc/xstartup
+chmod +x $USER_HOME/.vnc/xstartup
 
 # === 4️⃣ CREATE SYSTEMD SERVICE FOR VNC ===
 cat > /etc/systemd/system/vncserver.service <<'EOF'
@@ -55,14 +57,14 @@ systemctl daemon-reload
 systemctl enable vncserver
 systemctl start vncserver
 
-# === 5️⃣ INSTALL CHROME ===
+# === 5️⃣ INSTALL GOOGLE CHROME ===
 echo "🌐 Installing Google Chrome..."
-cd /home/azureuser
+cd $USER_HOME
 wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 apt install -y ./google-chrome-stable_current_amd64.deb || apt -f install -y
 rm -f google-chrome-stable_current_amd64.deb
 
-# === 6️⃣ CONFIGURE noVNC ===
+# === 6️⃣ CREATE SYSTEMD SERVICE FOR noVNC ===
 echo "🕸️ Setting up noVNC..."
 ln -sf /usr/share/novnc /opt/novnc
 ln -sf /usr/share/novnc/utils/websockify /usr/bin/websockify
@@ -85,31 +87,24 @@ systemctl daemon-reload
 systemctl enable novnc
 systemctl restart novnc
 
-# === 7️⃣ FIREWALL (UFW + Azure NSG) ===
-echo "🔓 Configuring firewall..."
+# === 7️⃣ CONFIGURE XRDP ===
+echo "🖥️ Enabling xRDP..."
+echo xfce4-session > /home/azureuser/.xsession
+chown azureuser:azureuser /home/azureuser/.xsession
+systemctl enable xrdp
+systemctl restart xrdp
+
+# === 8️⃣ FIREWALL RULES ===
+echo "🔓 Configuring UFW..."
 ufw allow 22/tcp
 ufw allow 3389/tcp
 ufw allow 5901/tcp
 ufw allow 6080/tcp
 ufw --force enable || true
 
-# Azure NSG rule auto-open (if Azure CLI is installed)
-if command -v az &> /dev/null; then
-  VMNAME=$(hostname)
-  RG=$(curl -s -H Metadata:true "http://169.254.169.254/metadata/instance/compute/resourceGroupName?api-version=2021-02-01&format=text" || echo "")
-  NSG=$(az network nsg list --resource-group "$RG" --query "[0].name" -o tsv 2>/dev/null || echo "")
-  if [ -n "$NSG" ]; then
-    for port in 3389 5901 6080; do
-      az network nsg rule create --resource-group "$RG" --nsg-name "$NSG" \
-        --name allow-$port --priority $((300+$port)) \
-        --access Allow --protocol Tcp --direction Inbound \
-        --destination-port-ranges $port --source-address-prefixes '*' >/dev/null 2>&1 || true
-    done
-  fi
-fi
-
-# === 8️⃣ FINISH ===
-echo "✅ Setup completed!"
-echo "➡️ Access via: http://<your-public-ip>:6080/vnc.html"
-echo "   VNC: localhost:5901"
-echo "   Password: $VNC_PASS"
+# === 9️⃣ DISPLAY ACCESS INFO ===
+IP=$(hostname -I | awk '{print $1}')
+echo "✅ Setup Completed!"
+echo "➡️ RDP: $IP:3389  (login with Ubuntu user)"
+echo "➡️ noVNC: http://$IP:6080/vnc.html  (password: $VNC_PASS)"
+echo "➡️ VNC: $IP:5901  (password: $VNC_PASS)"
