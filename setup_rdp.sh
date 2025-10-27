@@ -50,27 +50,26 @@ startxfce4 &
 EOF
 chmod +x $USER_HOME/.vnc/xstartup
 
-# === 4️⃣ Fixed VNC systemd service ===
+# === 4️⃣ Stable VNC systemd service ===
 cat > /etc/systemd/system/vncserver.service <<'EOF'
 [Unit]
 Description=VNC Server for azureuser
 After=network.target
 
 [Service]
-Type=forking
+Type=simple
 User=azureuser
-Group=azureuser
 WorkingDirectory=/home/azureuser
-PAMName=login
 
-# Clean any leftover processes before starting
-ExecStartPre=-/usr/bin/bash -c 'pkill Xtightvnc || true; rm -f /home/azureuser/.vnc/*.pid /home/azureuser/.vnc/*.log /tmp/.X1-lock'
+# Clean old sessions before start
+ExecStartPre=-/usr/bin/bash -c 'pkill Xtightvnc || true; rm -f /home/azureuser/.vnc/*.pid /tmp/.X1-lock'
 
-ExecStart=/usr/bin/vncserver :1 -geometry 1280x800 -depth 24
+# Start VNC securely (localhost only)
+ExecStart=/usr/bin/vncserver :1 -geometry 1280x800 -depth 24 -nolock -localhost
 ExecStop=/usr/bin/vncserver -kill :1
 
 Restart=always
-RestartSec=10
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
@@ -129,12 +128,10 @@ retry systemctl restart xrdp
 
 # === 9️⃣ Tinyproxy (no authentication) ===
 echo "🧱 Configuring Tinyproxy..."
-TINY_CONF="/etc/tinyproxy/tinyproxy.conf"
-if [ -f "$TINY_CONF" ]; then
-  cp "$TINY_CONF" "$TINY_CONF.bak"
-fi
+mkdir -p /var/log/tinyproxy
+chown nobody:nogroup /var/log/tinyproxy
 
-cat > "$TINY_CONF" <<'EOF'
+cat > /etc/tinyproxy/tinyproxy.conf <<'EOF'
 User nobody
 Group nogroup
 Port 8888
@@ -188,7 +185,7 @@ systemctl enable auto-restart-services
 # === ✅ Summary ===
 IP=$(hostname -I | awk '{print $1}')
 echo "✅ Setup Completed!"
-echo "➡️ RDP: $IP:3389 (login with your Ubuntu user)"
-echo "➡️ noVNC: http://$IP:6080/vnc.html (password: $VNC_PASS)"
-echo "➡️ VNC: $IP:5901 (password: $VNC_PASS)"
+echo "➡️ RDP: $IP:3389 (User: azureuser / Pass: chrome123)"
+echo "➡️ noVNC: http://$IP:6080/vnc.html (password: chrome123)"
+echo "➡️ VNC: localhost:5901 (password: chrome123)"
 echo "➡️ Tinyproxy: $IP:8888 (no authentication)"
