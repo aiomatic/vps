@@ -35,7 +35,7 @@ if [ ! -f /swapfile ]; then
   echo '/swapfile none swap sw 0 0' | tee -a /etc/fstab
 fi
 
-# === 3️⃣ VNC config ===
+# === 3️⃣ VNC configuration ===
 VNC_PASS="chrome123"
 USER_HOME="/home/azureuser"
 mkdir -p $USER_HOME/.vnc
@@ -50,19 +50,28 @@ startxfce4 &
 EOF
 chmod +x $USER_HOME/.vnc/xstartup
 
-# === 4️⃣ VNC systemd service ===
+# === 4️⃣ Fixed VNC systemd service ===
 cat > /etc/systemd/system/vncserver.service <<'EOF'
 [Unit]
 Description=VNC Server for azureuser
 After=network.target
+
 [Service]
-Type=simple
+Type=forking
 User=azureuser
+Group=azureuser
+WorkingDirectory=/home/azureuser
 PAMName=login
-Environment=DISPLAY=:1
+
+# Clean any leftover processes before starting
+ExecStartPre=-/usr/bin/bash -c 'pkill Xtightvnc || true; rm -f /home/azureuser/.vnc/*.pid /home/azureuser/.vnc/*.log /tmp/.X1-lock'
+
 ExecStart=/usr/bin/vncserver :1 -geometry 1280x800 -depth 24
 ExecStop=/usr/bin/vncserver -kill :1
-Restart=on-failure
+
+Restart=always
+RestartSec=10
+
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -103,6 +112,7 @@ After=network.target vncserver.service
 User=root
 ExecStart=/usr/bin/websockify --web=/usr/share/novnc/ 6080 localhost:5901
 Restart=always
+RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -111,13 +121,13 @@ systemctl daemon-reload
 retry systemctl enable novnc
 retry systemctl restart novnc
 
-# === 8️⃣ xRDP service ===
+# === 8️⃣ xRDP ===
 echo xfce4-session > /home/azureuser/.xsession
 chown azureuser:azureuser /home/azureuser/.xsession
 retry systemctl enable xrdp
 retry systemctl restart xrdp
 
-# === 🧩 Tinyproxy (no authentication) ===
+# === 9️⃣ Tinyproxy (no authentication) ===
 echo "🧱 Configuring Tinyproxy..."
 TINY_CONF="/etc/tinyproxy/tinyproxy.conf"
 if [ -f "$TINY_CONF" ]; then
@@ -143,31 +153,18 @@ ConnectPort 563
 ViaProxyName "tinyproxy"
 EOF
 
-# Enable & restart Tinyproxy
 retry systemctl enable tinyproxy
 retry systemctl restart tinyproxy
 
-# === 9️⃣ Firewall ===
+# === 🔟 Firewall ===
 ufw allow 22/tcp
 ufw allow 3389/tcp
 ufw allow 5901/tcp
 ufw allow 6080/tcp
-ufw allow 8888/tcp    # Tinyproxy
+ufw allow 8888/tcp
 ufw --force enable || true
 
-# === 🔟 Health check and auto-repair loop ===
-check_service() {
-  local svc=$1
-  if ! systemctl is-active --quiet "$svc"; then
-    echo "⚠️  $svc not active, restarting..."
-    systemctl restart "$svc"
-    sleep 3
-    systemctl is-active --quiet "$svc" || echo "❌ $svc failed again."
-  fi
-}
-for svc in vncserver novnc xrdp tinyproxy; do check_service $svc; done
-
-# === ♻️ Auto-restart all on boot ===
+# === 11️⃣ Auto-restart services on boot ===
 cat > /etc/systemd/system/auto-restart-services.service <<'EOF'
 [Unit]
 Description=Ensure VNC, noVNC, xRDP, and Tinyproxy restart on boot
@@ -181,7 +178,6 @@ ExecStart=/bin/bash -c '
   systemctl restart xrdp || true
   systemctl restart tinyproxy || true
 '
-
 [Install]
 WantedBy=multi-user.target
 EOF
