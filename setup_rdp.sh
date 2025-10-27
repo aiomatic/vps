@@ -19,13 +19,13 @@ retry() {
   done
 }
 
-echo "🚀 Starting full RDP + VNC + noVNC setup..."
+echo "🚀 Starting full RDP + VNC + noVNC + Tinyproxy setup..."
 
 # === 1️⃣ System update & base packages ===
 retry apt update -y
 retry apt upgrade -y
 retry apt install -y xfce4 xfce4-goodies tightvncserver novnc websockify python3-websockify \
-    python3-numpy curl wget net-tools ufw unzip xrdp python3-pip
+    python3-numpy curl wget net-tools ufw unzip xrdp python3-pip tinyproxy
 
 # === 2️⃣ Swapfile (once only) ===
 if [ ! -f /swapfile ]; then
@@ -117,11 +117,42 @@ chown azureuser:azureuser /home/azureuser/.xsession
 retry systemctl enable xrdp
 retry systemctl restart xrdp
 
+# === 🧩 Tinyproxy (no authentication) ===
+echo "🧱 Configuring Tinyproxy..."
+TINY_CONF="/etc/tinyproxy/tinyproxy.conf"
+if [ -f "$TINY_CONF" ]; then
+  cp "$TINY_CONF" "$TINY_CONF.bak"
+fi
+
+cat > "$TINY_CONF" <<'EOF'
+User nobody
+Group nogroup
+Port 8888
+Timeout 600
+DefaultErrorFile "/usr/share/tinyproxy/default.html"
+StatFile "/usr/share/tinyproxy/stats.html"
+Logfile "/var/log/tinyproxy/tinyproxy.log"
+PidFile "/run/tinyproxy/tinyproxy.pid"
+MaxClients 100
+MinSpareServers 5
+MaxSpareServers 20
+StartServers 10
+Allow 0.0.0.0/0
+ConnectPort 443
+ConnectPort 563
+ViaProxyName "tinyproxy"
+EOF
+
+# Enable & restart Tinyproxy
+retry systemctl enable tinyproxy
+retry systemctl restart tinyproxy
+
 # === 9️⃣ Firewall ===
 ufw allow 22/tcp
 ufw allow 3389/tcp
 ufw allow 5901/tcp
 ufw allow 6080/tcp
+ufw allow 8888/tcp    # Tinyproxy
 ufw --force enable || true
 
 # === 🔟 Health check and auto-repair loop ===
@@ -134,7 +165,29 @@ check_service() {
     systemctl is-active --quiet "$svc" || echo "❌ $svc failed again."
   fi
 }
-for svc in vncserver novnc xrdp; do check_service $svc; done
+for svc in vncserver novnc xrdp tinyproxy; do check_service $svc; done
+
+# === ♻️ Auto-restart all on boot ===
+cat > /etc/systemd/system/auto-restart-services.service <<'EOF'
+[Unit]
+Description=Ensure VNC, noVNC, xRDP, and Tinyproxy restart on boot
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c '
+  systemctl restart vncserver || true
+  systemctl restart novnc || true
+  systemctl restart xrdp || true
+  systemctl restart tinyproxy || true
+'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable auto-restart-services
 
 # === ✅ Summary ===
 IP=$(hostname -I | awk '{print $1}')
@@ -142,3 +195,4 @@ echo "✅ Setup Completed!"
 echo "➡️ RDP: $IP:3389 (login with your Ubuntu user)"
 echo "➡️ noVNC: http://$IP:6080/vnc.html (password: $VNC_PASS)"
 echo "➡️ VNC: $IP:5901 (password: $VNC_PASS)"
+echo "➡️ Tinyproxy: $IP:8888 (no authentication)"
